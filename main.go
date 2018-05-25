@@ -1,178 +1,181 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
-	"log"
+	redisapi "redis-terminal/redis-api"
 	"strings"
 
 	"github.com/gdamore/tcell"
-	"github.com/gomodule/redigo/redis"
 	"github.com/rivo/tview"
 )
 
-const (
-	finderPage = "*finder*" // The name of the Finder page.
-)
-
 var (
-	app         *tview.Application // The tview application.
-	pages       *tview.Pages       // The application pages.
-	finderFocus tview.Primitive    // The primitive in the Finder that last had focus.
+	app            *tview.Application
+	keyList        *tview.List
+	keyFilter      *tview.InputField
+	previewText    *tview.TextView
+	keyFlexBox     *tview.Flex
+	previewFlexBox *tview.Flex
+	viewFlexBox    *tview.Flex
+	editForm       *tview.Form
 )
 
-// Main entry point.
 func main() {
-	conn, err := redis.Dial("tcp", "localhost:6379")
+	r, err := redisapi.NewRedis("localhost:6379")
 	if err != nil {
-		log.Fatalf("Failed to connect to redis-server @ %s", "localhost:6379")
+		panic(err)
 	}
 
-	// Start the application.
 	app = tview.NewApplication()
 
-	scan(conn)
+	pages := tview.NewPages()
+	// Main page primitives
+	// Components
+	keyList = tview.NewList()
+	keyFilter = tview.NewInputField()
+	previewText = tview.NewTextView()
 
-	if err := app.Run(); err != nil {
-		fmt.Printf("Error running application: %s\n", err)
-	}
-}
+	// Flex boxes
+	keyFlexBox = tview.NewFlex()
+	previewFlexBox = tview.NewFlex()
 
-// Sets up a "Finder" used to navigate the databases, tables, and columns.
-func scan(conn redis.Conn) {
-	// Create the basic objects.
-	keys := tview.NewList().ShowSecondaryText(false)
-	keys.SetBorder(true).SetTitle("Keys")
-	columns := tview.NewTable().SetBorders(true)
-	columns.SetBorder(true).SetTitle("Columns").SetBorderColor(tcell.ColorPurple)
+	keyList.
+		ShowSecondaryText(false).
+		SetTitle("KEYS").
+		SetBorder(true).
+		SetBorderColor(tcell.ColorSteelBlue)
 
-	// Create the layout.
-	flex := tview.NewFlex().
-		AddItem(keys, 0, 1, true).
-		AddItem(columns, 0, 1, false)
+	keyFilter.
+		SetFieldBackgroundColor(tcell.ColorGhostWhite).
+		SetFieldTextColor(tcell.ColorBlack)
 
-	list, err := redis.Strings(conn.Do("KEYS", "*"))
-	if err != nil {
-		return
-	}
+	previewText.
+		SetDynamicColors(true).
+		SetRegions(true).
+		SetScrollable(true).
+		SetTitle("PREVIEW").
+		SetBorder(true).
+		SetBorderColor(tcell.ColorSteelBlue)
 
-	for _, item := range list {
-		keys.AddItem(item, "", 0, nil)
-	}
+	keyFlexBox.
+		SetDirection(tview.FlexRow)
+	previewFlexBox.
+		SetDirection(tview.FlexRow)
 
-	keys.SetChangedFunc(func(i int, pname string, sname string, s rune) {
-		columns.Clear()
-		columns.SetCell(0, 0, &tview.TableCell{Text: "Key", Align: tview.AlignCenter, Color: tcell.ColorYellow})
-		columns.SetCell(0, 1, &tview.TableCell{Text: "Value", Align: tview.AlignCenter, Color: tcell.ColorYellow})
-		columns.SetCell(0, 2, &tview.TableCell{Text: "Type", Align: tview.AlignCenter, Color: tcell.ColorYellow})
-		tp, err := redis.String(conn.Do("TYPE", pname))
+	viewFlexBox := tview.NewFlex().
+		SetDirection(tview.FlexColumn).
+		AddItem(keyFlexBox, 0, 1, true).
+		AddItem(previewFlexBox, 0, 4, false)
+
+	pages.AddPage("main", viewFlexBox, true, true)
+
+	// Edit Page primitives
+	// Components
+	editForm = tview.NewForm()
+	editForm.
+		SetFieldBackgroundColor(tcell.ColorWhite).
+		SetFieldTextColor(tcell.ColorBlack).
+		SetTitle("EDIT").
+		SetBorder(true).
+		SetBorderColor(tcell.ColorSteelBlue)
+
+	pages.AddPage("edit", editForm, true, false)
+
+	keyFlexBox.AddItem(keyList, 0, 40, true)
+	previewFlexBox.AddItem(previewText, 0, 10, false)
+
+	populateKeys := func(pattern string) {
+		keyList.Clear()
+		rKeys, err := r.GetKeys(pattern)
 		if err != nil {
 			return
 		}
 
-		v, err := getValueJSON(conn, tp, pname)
-		if err != nil {
-			return
-		}
-
-		columns.SetCell(1, 0, &tview.TableCell{Text: pname, Align: tview.AlignCenter, Color: tcell.ColorWhite})
-		columns.SetCell(1, 1, &tview.TableCell{Text: *v, Align: tview.AlignLeft, Color: tcell.ColorBlue, Expansion: 0})
-		columns.SetCell(1, 2, &tview.TableCell{Text: strings.ToUpper(tp), Align: tview.AlignCenter, Color: tcell.ColorRed})
-	})
-
-	keys.SetCurrentItem(0)
-
-	keys.SetSelectedFunc(func(i int, pname string, sname string, s rune) {
-		details(conn, pname)
-	})
-
-	keys.SetDoneFunc(func() {
-		app.Stop()
-	})
-
-	pages = tview.NewPages().
-		AddPage(finderPage, flex, true, true)
-	app.SetRoot(pages, true)
-}
-
-func details(conn redis.Conn, key string) {
-	finderFocus = app.GetFocus()
-
-	table := tview.NewTable().
-		SetFixed(1, 0).
-		SetBorders(true).
-		SetBordersColor(tcell.ColorYellow)
-	frame := tview.NewFrame(table).
-		SetBorders(0, 0, 0, 0, 0, 0)
-	frame.SetBorder(true).
-		SetTitle(fmt.Sprintf(`["%s"]`, key))
-
-	tp, err := redis.String(conn.Do("TYPE", key))
-	if err != nil {
-		return
-	}
-
-	switch tp {
-	case "string", "list", "set":
-		v, err := getValueJSON(conn, tp, key)
-		if err != nil {
-			return
-		}
-		frame.AddText(*v, true, tview.AlignLeft, tcell.ColorYellow)
-	case "hash":
-		v, err := getValue(conn, tp, key)
-		if err != nil {
-			return
-		}
-
-		m := v.(map[string]string)
-		i := 0
-		for mk, mv := range m {
-			table.SetCell(0, i, &tview.TableCell{Text: strings.ToUpper(mk), Align: tview.AlignCenter, Color: tcell.ColorRed})
-			table.SetCell(1, i, &tview.TableCell{Text: mv, Align: tview.AlignCenter, Color: tcell.ColorWhite})
-			i = i + 1
+		for _, k := range rKeys {
+			keyList.AddItem(k, "", 0, nil)
 		}
 	}
 
-	table.SetDoneFunc(func(key tcell.Key) {
-		switch key {
-		case tcell.KeyEscape, tcell.KeyEnter, tcell.KeyBackspace2:
-			// Go back to Finder.
-			pages.SwitchToPage(finderPage)
-			if finderFocus != nil {
-				app.SetFocus(finderFocus)
+	populateEditForm := func(key string) {
+		v, err := r.GetValue(key)
+		if err != nil {
+			return
+		}
+
+		switch res := v.(type) {
+		case map[string]string:
+			for key, value := range res {
+				editForm.AddInputField(key, value, len(value)+1, nil, nil)
 			}
+			break
+		case []string:
+			break
+		case string:
+			editForm.AddInputField("", res, len(res)+1, nil, nil)
+			break
+		default:
+			fmt.Printf("Type not supported")
+			break
 		}
+		editForm.
+			AddButton("Save", func() {
+				pages.SwitchToPage("main")
+			}).
+			AddButton("Quit", func() {
+				pages.SwitchToPage("main")
+			})
+	}
+	keyList.SetChangedFunc(func(i int, main string, sec string, sc rune) {
+		v, err := redisapi.PrintKey(r, main)
+		if err != nil {
+			return
+		}
+
+		t, err := r.GetType(main)
+		if err != nil {
+			return
+		}
+
+		keyTextBox := fmt.Sprintf("[red]KEY[yellow]: %s\n", main)
+		typeTextBox := fmt.Sprintf("[red]TYPE[yellow]: %s\n", strings.ToUpper(t))
+		valueTextBox := fmt.Sprintf("%s", v)
+		preview := fmt.Sprintf("%s%s%s", keyTextBox, typeTextBox, valueTextBox)
+		previewText.SetText(preview)
 	})
 
-	pages.AddPage(key, frame, true, true)
-}
+	keyList.SetSelectedFunc(func(i int, main string, sec string, r rune) {
+		editForm.Clear(true)
+		populateEditForm(main)
+		pages.SwitchToPage("edit")
+	})
 
-func getValue(conn redis.Conn, t string, k string) (v interface{}, err error) {
-	switch t {
-	case "hash":
-		return redis.StringMap(conn.Do("HGETALL", k))
-	case "list":
-		return redis.Strings(conn.Do("LRANGE", k, 0, -1))
-	case "string":
-		return redis.String(conn.Do("GET", k))
+	keyFilter.SetFinishedFunc(func(key tcell.Key) {
+		populateKeys("*" + keyFilter.GetText() + "*")
+		keyFlexBox.RemoveItem(keyFilter)
+		app.SetFocus(keyList)
+	})
+
+	editForm.SetCancelFunc(func() {
+		pages.SwitchToPage("main")
+	})
+
+	populateKeys("*")
+
+	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		switch event.Key() {
+		case tcell.KeyCtrlF:
+			if !keyFilter.HasFocus() {
+				keyFlexBox.AddItem(keyFilter, 0, 1, false)
+				keyFilter.SetText("")
+				app.SetFocus(keyFilter)
+			}
+		case tcell.KeyCtrlQ:
+			app.Stop()
+		}
+		return event
+	})
+
+	if err := app.SetRoot(pages, true).Run(); err != nil {
+		panic(err)
 	}
-	return
-}
-
-func getValueJSON(conn redis.Conn, t string, k string) (v *string, err error) {
-	v = new(string)
-
-	value, err := getValue(conn, t, k)
-	if err != nil {
-		return
-	}
-
-	b, err := json.Marshal(value)
-	if err != nil {
-		return nil, err
-	}
-	*v = string(b)
-
-	return
 }
