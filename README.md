@@ -16,3 +16,4 @@ Redis terminal provides a terminal based redis browser, modeled after the likes 
 go build -o redis-term main.go
 ./redis-term
 ``` 
+## Screen shots
