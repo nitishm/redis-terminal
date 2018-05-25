@@ -18,11 +18,13 @@ go build -o redis-term main.go
 ``` 
 ## Screen shots
 ### Preview
-**HASH**
+Hash
+---
 ![alt text](https://github.com/nitishm/redis-terminal/blob/master/docs/hash.png)
 
-**STRING**
-![alt text](https://github.com/nitishm/redis-terminal/blob/master/docs/string.png)
+List
+---
+![alt text](https://github.com/nitishm/redis-terminal/blob/master/docs/list.png)
 
 ### Edit
 ![alt text](https://github.com/nitishm/redis-terminal/blob/master/docs/edit.png)
