@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/gdamore/tcell"
+	"github.com/renstrom/fuzzysearch/fuzzy"
 	"github.com/rivo/tview"
 )
 
@@ -73,8 +74,8 @@ func main() {
 	// Components
 	editForm = tview.NewForm()
 	editForm.
-		SetFieldBackgroundColor(tcell.ColorWhite).
-		SetFieldTextColor(tcell.ColorBlack).
+		SetFieldBackgroundColor(tcell.ColorGray).
+		SetFieldTextColor(tcell.ColorWhiteSmoke).
 		SetTitle("EDIT").
 		SetBorder(true).
 		SetBorderColor(tcell.ColorSteelBlue)
@@ -84,13 +85,17 @@ func main() {
 	keyFlexBox.AddItem(keyList, 0, 40, true)
 	previewFlexBox.AddItem(previewText, 0, 10, false)
 
-	populateKeys := func(pattern string) {
+	populateKeys := func(pattern string, keys []string) {
+		rKeys := []string{}
 		keyList.Clear()
-		rKeys, err := r.GetKeys(pattern)
-		if err != nil {
-			return
+		if pattern != "" {
+			rKeys, err = r.GetKeys(pattern)
+			if err != nil {
+				return
+			}
+		} else {
+			rKeys = keys
 		}
-
 		for _, k := range rKeys {
 			keyList.AddItem(k, "", 0, nil)
 		}
@@ -123,8 +128,12 @@ func main() {
 			}).
 			AddButton("Quit", func() {
 				pages.SwitchToPage("main")
-			})
+			}).
+			SetButtonBackgroundColor(tcell.ColorSteelBlue).
+			SetButtonTextColor(tcell.ColorWhiteSmoke).
+			SetButtonsAlign(tview.AlignCenter)
 	}
+
 	keyList.SetChangedFunc(func(i int, main string, sec string, sc rune) {
 		v, err := redisapi.PrintKey(r, main)
 		if err != nil {
@@ -150,24 +159,33 @@ func main() {
 	})
 
 	keyFilter.SetFinishedFunc(func(key tcell.Key) {
-		populateKeys("*" + keyFilter.GetText() + "*")
+		keys, err := r.GetKeys("*")
+		if err != nil {
+			return
+		}
+		res := fuzzy.Find(keyFilter.GetText(), keys)
+
+		populateKeys("", res)
 		keyFlexBox.RemoveItem(keyFilter)
 		app.SetFocus(keyList)
 	})
 
 	editForm.SetCancelFunc(func() {
+		populateKeys("*", nil)
 		pages.SwitchToPage("main")
 	})
 
-	populateKeys("*")
+	populateKeys("*", nil)
 
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch event.Key() {
 		case tcell.KeyCtrlF:
-			if !keyFilter.HasFocus() {
-				keyFlexBox.AddItem(keyFilter, 0, 1, false)
-				keyFilter.SetText("")
-				app.SetFocus(keyFilter)
+			if viewFlexBox.HasFocus() {
+				if !keyFilter.HasFocus() {
+					keyFlexBox.AddItem(keyFilter, 0, 1, false)
+					keyFilter.SetText("")
+					app.SetFocus(keyFilter)
+				}
 			}
 		case tcell.KeyCtrlQ:
 			app.Stop()

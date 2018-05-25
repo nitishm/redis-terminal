@@ -38,6 +38,12 @@
   version = "v0.0.2"
 
 [[projects]]
+  name = "github.com/renstrom/fuzzysearch"
+  packages = ["fuzzy"]
+  revision = "d4ca9dfccd55dc6b076f9880d49c35315922c1f4"
+  version = "v1.0.0"
+
+[[projects]]
   branch = "master"
   name = "github.com/rivo/tview"
   packages = ["."]
@@ -58,6 +64,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "e73cbe27cda9fb27adfbe6dbb380627578ac097fc7145482f030cba9a77f7aa1"
+  inputs-digest = "55a50d46a9e253de3cd4c05fc4be5dbfa2eb976350c4b21764d468f1174ee531"
   solver-name = "gps-cdcl"
   solver-version = 1
